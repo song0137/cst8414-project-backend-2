@@ -1,4 +1,5 @@
 import { getPool, sql } from './sql';
+import { getSeedProducts } from './seed.catalog';
 
 async function seed() {
   const pool = await getPool();
@@ -106,15 +107,53 @@ async function seed() {
     }
   }
 
-  const pCount = await pool.request().query('SELECT COUNT(*) AS c FROM products');
-  if (pCount.recordset[0].c === 0) {
-    await pool.request().query(`
-      INSERT INTO products (provider, title, category, price, currency, product_url, image_url, is_active)
-      VALUES
-      ('FashionHub', 'Classic Denim Jacket', 'Outerwear', 89.99, 'CAD', 'https://example.com/denim-jacket', 'https://picsum.photos/seed/denim/400/400', 1),
-      ('UrbanFits', 'Wide Leg Trousers', 'Bottoms', 64.00, 'CAD', 'https://example.com/trousers', 'https://picsum.photos/seed/trousers/400/400', 1),
-      ('StyleNow', 'White Sneaker Low', 'Shoes', 110.50, 'CAD', 'https://example.com/sneakers', 'https://picsum.photos/seed/sneaker/400/400', 1)
-    `);
+  for (const product of getSeedProducts()) {
+    const existing = await pool
+      .request()
+      .input('provider', sql.NVarChar(120), product.provider)
+      .input('title', sql.NVarChar(255), product.title)
+      .query(`
+        SELECT TOP 1 id
+        FROM products
+        WHERE provider = @provider AND title = @title
+        ORDER BY id ASC
+      `);
+
+    if (existing.recordset.length === 0) {
+      await pool
+        .request()
+        .input('provider', sql.NVarChar(120), product.provider)
+        .input('title', sql.NVarChar(255), product.title)
+        .input('category', sql.NVarChar(100), product.category)
+        .input('price', sql.Float, product.price)
+        .input('currency', sql.NVarChar(10), product.currency)
+        .input('productUrl', sql.NVarChar(500), product.productUrl)
+        .input('imageUrl', sql.NVarChar(500), product.imageUrl)
+        .query(`
+          INSERT INTO products (provider, title, category, price, currency, product_url, image_url, is_active)
+          VALUES (@provider, @title, @category, @price, @currency, @productUrl, @imageUrl, 1)
+        `);
+    } else {
+      await pool
+        .request()
+        .input('id', sql.Int, existing.recordset[0].id)
+        .input('category', sql.NVarChar(100), product.category)
+        .input('price', sql.Float, product.price)
+        .input('currency', sql.NVarChar(10), product.currency)
+        .input('productUrl', sql.NVarChar(500), product.productUrl)
+        .input('imageUrl', sql.NVarChar(500), product.imageUrl)
+        .query(`
+          UPDATE products
+          SET
+            category = @category,
+            price = @price,
+            currency = @currency,
+            product_url = @productUrl,
+            image_url = @imageUrl,
+            is_active = 1
+          WHERE id = @id
+        `);
+    }
   }
 
   const bCount = await pool.request().query('SELECT COUNT(*) AS c FROM blog_posts');

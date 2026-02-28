@@ -7,13 +7,24 @@ import { summarizeQuizSubmission } from './quiz.validation';
 
 const router = Router();
 
-router.get('/questions', requireAuth, async (_req: AuthRequest, res: Response) => {
+router.get('/questions', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
   const pool = await getPool();
-  const result = await pool.request().query(`
+  const result = await pool.request().input('userId', sql.Int, req.user.userId).query(`
+    WITH latest_responses AS (
+      SELECT
+        r.question_id,
+        r.answer_id,
+        ROW_NUMBER() OVER (PARTITION BY r.question_id ORDER BY r.created_at DESC, r.id DESC) AS rn
+      FROM user_quiz_responses r
+      WHERE r.user_id = @userId
+    )
     SELECT q.id AS question_id, q.question_text, q.dimension, q.is_active,
-           a.id AS answer_id, a.answer_text, a.score_weight
+           a.id AS answer_id, a.answer_text, a.score_weight,
+           lr.answer_id AS selected_answer_id
     FROM style_quiz_questions q
     LEFT JOIN style_quiz_answers a ON q.id = a.question_id
+    LEFT JOIN latest_responses lr ON lr.question_id = q.id AND lr.rn = 1
     WHERE q.is_active = 1
     ORDER BY q.id, a.id
   `);
@@ -26,6 +37,7 @@ router.get('/questions', requireAuth, async (_req: AuthRequest, res: Response) =
         questionText: row.question_text,
         dimension: row.dimension,
         isActive: row.is_active,
+        selectedAnswerId: row.selected_answer_id ?? null,
         answers: [],
       });
     }

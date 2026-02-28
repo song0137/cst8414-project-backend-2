@@ -9,6 +9,7 @@ import {
   scoreProductCandidate,
   scoreWardrobeCandidate,
 } from './recommendation.engine';
+import { buildWardrobePayloadFromProduct } from './recommendation.feedback';
 
 const router = Router();
 
@@ -231,7 +232,106 @@ router.post('/:id/feedback', requireAuth, async (req: AuthRequest, res: Response
       `);
   }
 
-  return res.status(201).json({ message: 'Feedback captured' });
+  if (parsed.data.feedbackType !== 'like') {
+    return res.status(201).json({ message: 'Feedback captured', addedToWardrobe: false });
+  }
+
+  const recommendationItem = await pool
+    .request()
+    .input('userId', sql.Int, req.user.userId)
+    .input('recommendationItemId', sql.Int, recommendationItemId)
+    .query(`
+      SELECT
+        ri.item_type,
+        ri.product_id,
+        p.title AS product_title,
+        p.category AS product_category,
+        p.provider AS product_provider,
+        p.image_url AS product_image_url
+      FROM recommendation_items ri
+      INNER JOIN recommendation_runs rr ON rr.id = ri.run_id
+      LEFT JOIN products p ON p.id = ri.product_id
+      WHERE rr.user_id = @userId AND ri.id = @recommendationItemId
+    `);
+
+  const row = recommendationItem.recordset[0];
+  if (!row || row.item_type !== 'product' || !row.product_id) {
+    return res.status(201).json({
+      message: 'Feedback captured',
+      addedToWardrobe: false,
+      reason: 'Only product recommendations can be added to wardrobe',
+    });
+  }
+
+  const profileColorResult = await pool.request().input('userId', sql.Int, req.user.userId).query(`
+    WITH latest_responses AS (
+      SELECT
+        r.question_id,
+        r.answer_id,
+        ROW_NUMBER() OVER (PARTITION BY r.question_id ORDER BY r.created_at DESC, r.id DESC) AS rn
+      FROM user_quiz_responses r
+      WHERE r.user_id = @userId
+    )
+    SELECT TOP 1 a.answer_text
+    FROM latest_responses lr
+    INNER JOIN style_quiz_questions q ON q.id = lr.question_id
+    INNER JOIN style_quiz_answers a ON a.id = lr.answer_id
+    WHERE lr.rn = 1 AND LOWER(q.dimension) = 'color'
+  `);
+  const profileColor = profileColorResult.recordset[0]?.answer_text ?? null;
+
+  const payload = buildWardrobePayloadFromProduct({
+    title: row.product_title,
+    category: row.product_category,
+    provider: row.product_provider,
+    imageUrl: row.product_image_url,
+  }, profileColor);
+
+  const duplicate = await pool
+    .request()
+    .input('userId', sql.Int, req.user.userId)
+    .input('name', sql.NVarChar(150), payload.name)
+    .input('category', sql.NVarChar(100), payload.category)
+    .input('brand', sql.NVarChar(120), payload.brand)
+    .query(`
+      SELECT TOP 1 id
+      FROM wardrobe_items
+      WHERE user_id = @userId
+        AND name = @name
+        AND category = @category
+        AND brand = @brand
+      ORDER BY id DESC
+    `);
+
+  if (duplicate.recordset.length > 0) {
+    return res.status(201).json({
+      message: 'Feedback captured',
+      addedToWardrobe: false,
+      reason: 'Item already in wardrobe',
+      wardrobeItemId: duplicate.recordset[0].id,
+    });
+  }
+
+  const inserted = await pool
+    .request()
+    .input('userId', sql.Int, req.user.userId)
+    .input('name', sql.NVarChar(150), payload.name)
+    .input('category', sql.NVarChar(100), payload.category)
+    .input('color', sql.NVarChar(100), payload.color)
+    .input('season', sql.NVarChar(100), payload.season)
+    .input('brand', sql.NVarChar(120), payload.brand)
+    .input('imageUrl', sql.NVarChar(500), payload.imageUrl)
+    .query(`
+      INSERT INTO wardrobe_items (user_id, name, category, color, season, brand, image_url)
+      OUTPUT INSERTED.id
+      VALUES (@userId, @name, @category, @color, @season, @brand, @imageUrl)
+    `);
+
+  return res.status(201).json({
+    message: 'Feedback captured and item added to wardrobe',
+    addedToWardrobe: true,
+    wardrobeItemId: inserted.recordset[0].id,
+  });
 });
 
 export default router;

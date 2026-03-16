@@ -28,6 +28,8 @@ export type ProductCandidate = {
   category: string;
   title: string;
   price: number;
+  averageRating?: number | null;
+  reviewCount?: number | null;
 };
 
 const styleCategoryAffinity: Record<string, string[]> = {
@@ -101,6 +103,14 @@ function scoreBudget(price: number, budget?: string): number {
   return 0;
 }
 
+function scoreReviewSignal(averageRating?: number | null, reviewCount?: number | null): number {
+  if (!Number.isFinite(averageRating) || !reviewCount || reviewCount <= 0) return 0;
+
+  const centeredRating = ((averageRating ?? 0) - 3) * 4;
+  const confidenceBonus = Math.min(reviewCount, 20) / 5;
+  return round(centeredRating + confidenceBonus);
+}
+
 export function mapQuizRowsToProfile(rows: QuizProfileRow[]): QuizProfile {
   const dimensions: Record<string, string> = {};
   let totalQuizScore = 0;
@@ -164,7 +174,43 @@ export function scoreProductCandidate(
   if (matchesColorPalette(candidate.title, profile.color)) score += 5;
 
   score += scoreBudget(candidate.price, profile.budget);
+  score += scoreReviewSignal(candidate.averageRating, candidate.reviewCount);
   score += (feedbackWeights.get(category) ?? 0) * 7;
 
   return round(score);
+}
+
+export function buildProductMatchReasons(
+  candidate: ProductCandidate,
+  profile: QuizProfile,
+  feedbackWeights: Map<string, number>,
+): string[] {
+  const reasons: string[] = [];
+  const category = normalize(candidate.category);
+
+  if (matchesStyleCategory(candidate.category, profile.style) && profile.style) {
+    reasons.push(`Matches your ${profile.style.toLowerCase()} style`);
+  }
+
+  if (matchesFitCategory(candidate.category, profile.fit) && profile.fit) {
+    reasons.push(`Fits your ${profile.fit.toLowerCase()} preference`);
+  }
+
+  if (matchesColorPalette(candidate.title, profile.color) && profile.color) {
+    reasons.push(`Works with your ${profile.color.toLowerCase()} color palette`);
+  }
+
+  if (scoreBudget(candidate.price, profile.budget) > 0 && profile.budget) {
+    reasons.push(`Aligned with your ${profile.budget.toLowerCase()} budget`);
+  }
+
+  if ((feedbackWeights.get(category) ?? 0) > 0) {
+    reasons.push('Similar shoppers choices got positive feedback from you');
+  }
+
+  if ((candidate.reviewCount ?? 0) > 0 && (candidate.averageRating ?? 0) >= 4) {
+    reasons.push('Highly rated by the community');
+  }
+
+  return reasons.slice(0, 3);
 }

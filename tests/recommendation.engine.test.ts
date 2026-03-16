@@ -72,4 +72,43 @@ describe('recommendation engine helpers', () => {
 
     expect(productMatch).toBeGreaterThan(productMismatch);
   });
+
+  it('boosts highly rated products over poorly rated ones when other signals are equal', () => {
+    const profile = mapQuizRowsToProfile([
+      { dimension: 'style', answerText: 'Classic', scoreWeight: 4 },
+      { dimension: 'color', answerText: 'Neutral', scoreWeight: 3 },
+      { dimension: 'fit', answerText: 'Slim', scoreWeight: 3 },
+      { dimension: 'budget', answerText: 'Mid-range', scoreWeight: 2 },
+    ]);
+
+    const feedback = buildFeedbackWeights([{ category: 'Outerwear', feedbackType: 'like' }]);
+
+    const highlyRated = scoreProductCandidate(
+      {
+        category: 'Outerwear',
+        title: 'Tailored Navy Blazer',
+        price: 125,
+        averageRating: 4.8,
+        reviewCount: 18,
+      },
+      profile,
+      feedback,
+      'spring',
+    );
+
+    const poorlyRated = scoreProductCandidate(
+      {
+        category: 'Outerwear',
+        title: 'Tailored Navy Blazer',
+        price: 125,
+        averageRating: 2.1,
+        reviewCount: 18,
+      },
+      profile,
+      feedback,
+      'spring',
+    );
+
+    expect(highlyRated).toBeGreaterThan(poorlyRated);
+  });
 });

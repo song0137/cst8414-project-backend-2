@@ -8,11 +8,19 @@ import {
   mapQuizRowsToProfile,
   scoreProductCandidate,
 } from '../recommendations/recommendation.engine';
+import { sortAndFilterShoppingSuggestions, type ShoppingSortMode } from './shopping.utils';
 
 const router = Router();
 
 router.get('/suggestions', requireAuth, async (req: AuthRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
+
+  const sortParam = String(req.query.sort ?? 'personalized');
+  const sort: ShoppingSortMode = ['personalized', 'top-rated', 'price-low', 'price-high'].includes(sortParam)
+    ? (sortParam as ShoppingSortMode)
+    : 'personalized';
+  const minRatingValue = req.query.minRating ? Number(req.query.minRating) : undefined;
+  const minRating = Number.isFinite(minRatingValue) ? minRatingValue : undefined;
 
   const pool = await getPool();
   const userId = req.user.userId;
@@ -87,7 +95,8 @@ router.get('/suggestions', requireAuth, async (req: AuthRequest, res: Response) 
       p.image_url
   `);
 
-  const suggestions = products.recordset
+  const suggestions = sortAndFilterShoppingSuggestions(
+    products.recordset
     .map((product) => {
       const averageRating =
         typeof product.average_rating === 'number'
@@ -132,9 +141,9 @@ router.get('/suggestions', requireAuth, async (req: AuthRequest, res: Response) 
         matchReasons:
           matchReasons.length > 0 ? matchReasons : ['Selected from the best available catalog matches'],
       };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 12);
+    }),
+    { sort, minRating },
+  ).slice(0, 12);
 
   return res.status(200).json(suggestions);
 });
